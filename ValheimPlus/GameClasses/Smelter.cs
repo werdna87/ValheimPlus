@@ -276,7 +276,7 @@ namespace ValheimPlus.GameClasses
 
                             for (int i = 0; i < addedOres; i++)
                             {
-                                smelter.m_nview.InvokeRPC("RPC_AddOre", new object[] { orePrefab.name });
+                                smelter.m_nview.InvokeRPC("RPC_AddOre", new object[] { orePrefab.name, false });
                             }
                             toMaxOre -= addedOres;
                             if (addedOres > 0)

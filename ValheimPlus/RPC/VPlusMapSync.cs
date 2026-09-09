@@ -61,7 +61,8 @@ namespace ValheimPlus.RPC
                     {
                         Name = "VPlusMapSync",
                         Payload = new object[] { pkg },
-                        Target = ZRoutedRpc.Everybody
+                        // 1.0.x removed ZRoutedRpc.Everybody; target 0 means the server broadcasts to all peers.
+                        Target = 0L
                     });
                 }
 
@@ -112,8 +113,13 @@ namespace ValheimPlus.RPC
         public static void SendMapToServer()
         {
 
-            //Convert exploration data to ranges
-            List<MapRange> exploredAreas = ExplorationDataToMapRanges(Minimap.instance.m_explored);
+            //Convert exploration data to ranges (game stores this as a BitArray; our helpers work on bool[])
+            System.Collections.BitArray exploredBits = Minimap.instance.m_explored;
+            bool[] exploredData = new bool[exploredBits.Count];
+            for (int i = 0; i < exploredData.Length; ++i)
+                exploredData[i] = exploredBits[i];
+
+            List<MapRange> exploredAreas = ExplorationDataToMapRanges(exploredData);
 
             //If we have no data to send, just send an empty RPC to trigger the server end to sync.
             if (exploredAreas.Count == 0)

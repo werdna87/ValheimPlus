@@ -681,7 +681,7 @@ namespace ValheimPlus.GameClasses
                 return il.AsEnumerable();
             }
 
-            public static void MessageNoop(Character _0, MessageHud.MessageType _1, string _2, int _3, Sprite _4, int repaired)
+            public static void MessageNoop(Character _0, MessageHud.MessageType _1, string _2, int _3, Sprite _4, bool _5, int repaired)
             {
                 m_repair_count += repaired;
             }
@@ -931,14 +931,46 @@ namespace ValheimPlus.GameClasses
                 // ```
                 if (il[i].Calls(Method_Inventory_CountItems))
                 {
-                    il.Insert(++i, new CodeInstruction(OpCodes.Ldloc_2));
-                    il.Insert(++i, new CodeInstruction(OpCodes.Ldloc_S, 5));
+                    // The local slots holding the requirement and quality changed between game versions, so find them
+                    // dynamically. CountItems(name, quality, includeChests) leaves three pushes on the stack; walking
+                    // back from the call: [bool push] [quality push] [ldfld chain for name] [item slot load].
+                    int j = i - 1;
+                    if (j < 0 || !IsSinglePush(il[j])) continue;   // bool argument
+                    j--;
+                    CodeInstruction qualityPush = null;
+                    if (j >= 0 && IsSinglePush(qualityPush = il[j])) { } else { }
+                    if (qualityPush == null) continue;             // quality argument
+                    j--;
+                    while (j >= 0 && il[j].opcode == OpCodes.Ldfld) j--;   // ldfld.s shares the Ldfld opcode
+                    int itemSlot = -1;
+                    if (j >= 0)
+                    {
+                        CodeInstruction ins = il[j];
+                        if (ins.opcode == OpCodes.Ldloc_S)
+                            itemSlot = ins.operand is int ? (int)ins.operand : ins.operand is short ? (short)ins.operand : -1;
+                        else if (ins.opcode.Value >= OpCodes.Ldloc_0.Value && ins.opcode.Value <= OpCodes.Ldloc_3.Value)
+                            itemSlot = ins.opcode.Value - OpCodes.Ldloc_0.Value;
+                    }
+                    if (itemSlot < 0) continue;   // unrecognized layout: leave this call site unpatched
+
+                    // Push (item, quality, player) for ComputeItemQuantity(int fromInventory, Piece.Requirement item, int quality, Player player).
+                    il.Insert(++i, new CodeInstruction(OpCodes.Ldloc_S, itemSlot));
+                    il.Insert(++i, new CodeInstruction(qualityPush.opcode, qualityPush.operand));   // copy opcode AND operand
                     il.Insert(++i, new CodeInstruction(OpCodes.Ldarg_0));
                     il.Insert(++i, new CodeInstruction(OpCodes.Call, Method_ComputeItemQuantity));
                 }
             }
 
             return il;
+        }
+
+        private static bool IsSinglePush(CodeInstruction ins)
+        {
+            // An instruction that leaves exactly one value on the evaluation stack.
+            int op = ins.opcode.Value;
+            return ins.opcode == OpCodes.Ldloc_S || (op >= OpCodes.Ldloc_0.Value && op <= OpCodes.Ldloc_3.Value)
+                || ((op >= OpCodes.Ldc_I4_0.Value && op <= OpCodes.Ldc_I4_7.Value) || ins.opcode == OpCodes.Ldc_I4_S
+                    || ins.opcode == OpCodes.Ldc_I4_M1);
         }
 
         private static int ComputeItemQuantity(int fromInventory, Piece.Requirement item, int quality, Player player)
@@ -990,13 +1022,44 @@ namespace ValheimPlus.GameClasses
             {
                 if (il[i].Calls(method_Inventory_CountItems))
                 {
-                    il.Insert(++i, new CodeInstruction(OpCodes.Ldloc_2));
+                    // The local slot holding the requirement changed between game versions, so find it dynamically.
+                    // CountItems(name, quality, includeChests) leaves three pushes on the stack; walking back from the
+                    // call: [bool push] [quality push (local or constant)] [ldfld chain for name] [item slot load].
+                    int j = i - 1;
+                    if (j < 0 || !IsSinglePush(il[j])) continue;   // bool argument
+                    j--;
+                    CodeInstruction qualityPush = null;
+                    if (j >= 0 && IsSinglePush(qualityPush = il[j])) { } else { }
+                    if (qualityPush == null) continue;             // quality argument
+                    j--;
+                    while (j >= 0 && il[j].opcode == OpCodes.Ldfld) j--;   // ldfld.s shares the Ldfld opcode
+                    int itemSlot = -1;
+                    if (j >= 0)
+                    {
+                        CodeInstruction ins = il[j];
+                        if (ins.opcode == OpCodes.Ldloc_S)
+                            itemSlot = ins.operand is int ? (int)ins.operand : ins.operand is short ? (short)ins.operand : -1;
+                        else if (ins.opcode.Value >= OpCodes.Ldloc_0.Value && ins.opcode.Value <= OpCodes.Ldloc_3.Value)
+                            itemSlot = ins.opcode.Value - OpCodes.Ldloc_0.Value;
+                    }
+                    if (itemSlot < 0) continue;   // unrecognized layout: leave this call site unpatched
+
+                    il.Insert(++i, new CodeInstruction(OpCodes.Ldloc_S, itemSlot));
                     il.Insert(++i, new CodeInstruction(OpCodes.Ldarg_0));
                     il.Insert(++i, new CodeInstruction(OpCodes.Call, method_ComputeItemQuantity));
                 }
             }
 
             return il.AsEnumerable();
+        }
+
+        private static bool IsSinglePush(CodeInstruction ins)
+        {
+            // An instruction that leaves exactly one value on the evaluation stack.
+            int op = ins.opcode.Value;
+            return ins.opcode == OpCodes.Ldloc_S || (op >= OpCodes.Ldloc_0.Value && op <= OpCodes.Ldloc_3.Value)
+                || ((op >= OpCodes.Ldc_I4_0.Value && op <= OpCodes.Ldc_I4_7.Value) || ins.opcode == OpCodes.Ldc_I4_S
+                    || ins.opcode == OpCodes.Ldc_I4_M1);
         }
 
         private static int ComputeItemQuantity(int fromInventory, Piece.Requirement item, Player player)
@@ -1027,6 +1090,7 @@ namespace ValheimPlus.GameClasses
         typeof(int), typeof(int))]
     public static class Player_ConsumeResources_Transpiler
     {
+        // 1.0.x still calls the string overload: RemoveItem(name, amount, quality, includeChests).
         private static readonly MethodInfo Method_Inventory_RemoveItem =
             AccessTools.Method(typeof(Inventory), nameof(Inventory.RemoveItem),
                 new[] { typeof(string), typeof(int), typeof(int), typeof(bool) });
@@ -1063,31 +1127,96 @@ namespace ValheimPlus.GameClasses
                 }
             }
 
-            if (thisIdx == -1 || callIdx == -1)
+            if (thisIdx == -1 || callIdx == -1 || Method_Inventory_RemoveItem == null)
             {
                 PatchLog.Failed(
                     nameof(Player_ConsumeResources_Transpiler),
-                    "Crafting will not take resources from nearby chests.");
+                    $"Crafting will not take resources from nearby chests. " +
+                    $"RemoveItem resolved={Method_Inventory_RemoveItem != null} thisIdx={thisIdx} callIdx={callIdx}");
+                return il;
             }
-            else
-            {
-                // Replaces 
-                // ```
-                // this.m_inventory.RemoveItem(requirement.m_resItem.m_itemData.m_shared.m_name, amount, itemQuality);
-                // ```
-                // with
-                // ```
-                // RemoveItemsFromInventoryAndNearbyChests(this, requirement, amount, itemQuality)
-                // ```
-                il.RemoveRange(thisIdx + 1, callIdx - thisIdx);
 
-                il.Insert(++thisIdx, new CodeInstruction(OpCodes.Ldloc_2));
-                il.Insert(++thisIdx, new CodeInstruction(OpCodes.Ldloc_3));
-                il.Insert(++thisIdx, new CodeInstruction(OpCodes.Ldarg_3));
-                il.Insert(++thisIdx, new CodeInstruction(OpCodes.Call, Method_RemoveItemsFromInventoryAndNearbyChests));
+            // The local slots holding the requirement and amount changed between game versions, so find them
+            // dynamically. RemoveItem(name, amount, quality, includeChests) leaves four pushes on the stack;
+            // walking back from the call: [bool push] [quality push] [amount slot load] [ldfld chain for name] [requirement slot load].
+            int j = callIdx - 1;   // bool push (includeChests)
+            j -= 2;                // skip quality push -> now at the amount load
+            while (j > thisIdx && il[j].opcode == OpCodes.Ldfld) j--;      // ldfld chain for name
+            int amountJ = j;
+            int amountSlot = GetLocalSlot(j >= 0 ? il[j] : null);
+            j--;
+            while (j > thisIdx && il[j].opcode == OpCodes.Ldfld) j--;      // ldfld chain for requirement
+            int reqJ = j;
+            int requirementSlot = GetLocalSlot(j >= 0 ? il[j] : null);
+
+            if (amountSlot < 0 || requirementSlot < 0)
+            {
+                PatchLog.Failed(
+                    nameof(Player_ConsumeResources_Transpiler),
+                    $"Crafting will not take resources from nearby chests. " + DescribeIns(amountJ, il) + " " + DescribeIns(reqJ, il));
+                return il;
             }
+
+            // Replaces 
+            // ```
+            // this.m_inventory.RemoveItem(requirement.m_resItem.m_itemData.m_shared.m_name, amount, itemQuality);
+            // ```
+            // with
+            // ```
+            // RemoveItemsFromInventoryAndNearbyChests(this, requirement, amount, itemQuality)
+            // ```
+            il.RemoveRange(thisIdx + 1, callIdx - thisIdx);
+
+            il.Insert(++thisIdx, new CodeInstruction(OpCodes.Ldloc_S, requirementSlot));
+            il.Insert(++thisIdx, new CodeInstruction(OpCodes.Ldloc_S, amountSlot));
+            il.Insert(++thisIdx, new CodeInstruction(OpCodes.Ldarg_3));
+            il.Insert(++thisIdx, new CodeInstruction(OpCodes.Call, Method_RemoveItemsFromInventoryAndNearbyChests));
 
             return il;
+        }
+
+        /// <summary>
+        /// Returns the local slot index if the instruction loads/stores a local, otherwise -1.
+        /// Uses type-checked casts so unexpected operand types degrade gracefully instead of throwing.
+        /// </summary>
+        private static int GetLocalSlot(CodeInstruction ins)
+        {
+            if (ins == null) return -1;
+            try
+            {
+                object operand = ins.operand;
+                if (ins.opcode == OpCodes.Ldloc_S || ins.opcode == OpCodes.Stloc_S)
+                {
+                    // HarmonyX may box the slot as short, ushort, int or byte, or wrap it in a local-builder
+                    // object exposing an Index property (Mono.Cecil style).
+                    try
+                    {
+                        if (operand is IConvertible) return Convert.ToInt32(operand);
+                        var indexProp = operand.GetType().GetProperty("Index");
+                        if (indexProp != null && indexProp.GetValue(operand) is int idx) return idx;
+                        // Last resort: HarmonyX's local-builder objects render as "System.Int32 (4)".
+                        string text = operand.ToString();
+                        int paren = text.LastIndexOf('(');
+                        if (paren >= 0 && int.TryParse(text.Substring(paren + 1).TrimEnd(')'), out int parsed)) return parsed;
+                    }
+                    catch { /* unrecognized operand shape: treat as no slot */ }
+                    return -1;
+                }
+                int v = ins.opcode.Value;
+                if ((v >= OpCodes.Ldloc_0.Value && v <= OpCodes.Ldloc_3.Value)
+                     || (v >= OpCodes.Stloc_0.Value && v <= OpCodes.Stloc_3.Value))
+                    return v - OpCodes.Ldloc_0.Value;
+            }
+            catch { /* unrecognized instruction shape: treat as no slot */ }
+            return -1;
+        }
+
+        private static string DescribeIns(int idx, List<CodeInstruction> il)
+        {
+            if (idx < 0 || idx >= il.Count) return "ins=<oob>";
+            CodeInstruction ins = il[idx];
+            object op = ins.operand;
+            return $"ins[{idx}]={ins.opcode}({(op == null ? "null" : op.GetType().Name + ":" + op)})";
         }
 
         private static void RemoveItemsFromInventoryAndNearbyChests(

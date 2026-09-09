@@ -6,7 +6,8 @@ namespace ValheimPlus.Utility
     public class RpcData
     {
         public string Name;
-        public long Target = ZRoutedRpc.Everybody;
+        // 1.0.x removed ZRoutedRpc.Everybody; a target peer ID of 0 means "all peers" (server broadcasts).
+        public long Target = 0L;
         public object[] Payload;
     }
 
